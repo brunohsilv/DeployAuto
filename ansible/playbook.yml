@@ -1,0 +1,138 @@
+---
+- name: Deploy WordPress with Docker
+  hosts: wordpress
+  become: yes
+  gather_facts: no
+
+  pre_tasks:
+    - name: Wait for system to be ready
+      wait_for_connection:
+        timeout: 300
+
+    - name: Setup facts
+      setup:
+
+  tasks:
+    - name: Update system
+      apt:
+        update_cache: yes
+        upgrade: dist
+        cache_valid_time: 3600
+
+    - name: Install Docker dependencies
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - software-properties-common
+        state: present
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Create app directory
+      file:
+        path: /home/ubuntu/wordpress
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Create docker-compose file without version
+      copy:
+        content: |
+          services:
+            wordpress:
+              image: wordpress:latest
+              container_name: wordpress
+              ports:
+                - "80:80"
+              environment:
+                WORDPRESS_DB_HOST: db
+                WORDPRESS_DB_USER: wordpress
+                WORDPRESS_DB_PASSWORD: wordpress
+                WORDPRESS_DB_NAME: wordpress
+              volumes:
+                - wordpress_data:/var/www/html
+              depends_on:
+                - db
+              restart: unless-stopped
+
+            db:
+              image: mysql:5.7
+              container_name: mysql_db
+              environment:
+                MYSQL_DATABASE: wordpress
+                MYSQL_USER: wordpress
+                MYSQL_PASSWORD: wordpress
+                MYSQL_RANDOM_ROOT_PASSWORD: '1'
+              volumes:
+                - db_data:/var/lib/mysql
+              restart: unless-stopped
+
+          volumes:
+            wordpress_data:
+            db_data:
+        dest: /home/ubuntu/wordpress/docker-compose.yml
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Pull Docker images as root
+      community.docker.docker_image:
+        name: "{{ item }}"
+        source: pull
+      loop:
+        - wordpress:latest
+        - mysql:5.7
+
+    - name: Start containers with docker compose (using sudo)
+      shell: |
+        cd /home/ubuntu/wordpress
+        sudo docker compose up -d
+      args:
+        executable: /bin/bash
+
+    - name: Wait for services to start
+      wait_for:
+        port: 80
+        host: 127.0.0.1
+        delay: 15
+        timeout: 180
+
+    - name: Verify containers are running
+      shell: sudo docker ps
+      register: docker_ps
+      
+    - name: Show running containers
+      debug:
+        var: docker_ps.stdout_lines
