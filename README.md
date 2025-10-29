@@ -29,6 +29,9 @@ sudo apt install unzip
 unzip awscliv2.zip
 sudo ./aws/install
 ````
+Configurar credencias: ```aws configure```
+(As credencias são geradas pelo IMA da AWS)
+
 # Para realizar o Deploy
 
 ```
