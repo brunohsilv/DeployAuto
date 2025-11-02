@@ -41,8 +41,19 @@ chmod +x check-prerequisites.sh deploy.sh
 ./check-prerequisites.sh    # Verifica dependências
 ./deploy.sh                 # Deploy automático
 ```
+# Para realizar o teste de Resiliência
 
-Verificar a Versao do PHP
+```
+chmod +x teste-resiliencia.sh
+./teste-resiliencia.sh
+```
+Rollback:
+```
+chmod +x rollback.sh
+./rollback.sh
+```
+
+# Verificar a Versao do PHP
 
 ```
 IP=$(cd terraform && terraform output -raw instance_public_ip)
