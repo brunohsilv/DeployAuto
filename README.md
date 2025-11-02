@@ -41,3 +41,10 @@ chmod +x check-prerequisites.sh deploy.sh
 ./check-prerequisites.sh    # Verifica dependências
 ./deploy.sh                 # Deploy automático
 ```
+
+Verificar a Versao do PHP
+
+```
+IP=$(cd terraform && terraform output -raw instance_public_ip)
+ssh -i terraform/wordpress-key.pem ubuntu@$IP "sudo docker exec wordpress php --version | head -1"
+```
