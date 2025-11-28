@@ -59,3 +59,7 @@ chmod +x rollback.sh
 IP=$(cd terraform && terraform output -raw instance_public_ip)
 ssh -i terraform/wordpress-key.pem ubuntu@$IP "sudo docker exec wordpress php --version | head -1"
 ```
+
+# Destruir tudo 
+
+```cd terraform && terraform destroy -auto-approve```
