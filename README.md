@@ -41,24 +41,6 @@ chmod +x check-prerequisites.sh deploy.sh
 ./check-prerequisites.sh    # Verifica dependências
 ./deploy.sh                 # Deploy automático
 ```
-# Para realizar o teste de Resiliência
-
-```
-chmod +x teste-resiliencia.sh
-./teste-resiliencia.sh
-```
-Rollback:
-```
-chmod +x rollback.sh
-./rollback.sh
-```
-
-# Verificar a Versao do PHP
-
-```
-IP=$(cd terraform && terraform output -raw instance_public_ip)
-ssh -i terraform/wordpress-key.pem ubuntu@$IP "sudo docker exec wordpress php --version | head -1"
-```
 
 # Destruir tudo 
 
