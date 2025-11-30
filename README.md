@@ -63,3 +63,17 @@ ssh -i terraform/wordpress-key.pem ubuntu@$IP "sudo docker exec wordpress php --
 # Destruir tudo 
 
 ```cd terraform && terraform destroy -auto-approve```
+
+# Ver graficos:
+
+Instalar o Python completo e venv: ```sudo apt install python3-venv python3-pip -y```
+
+Criar um ambiente virtual na pasta do projeto: ```python3 -m venv venv```
+
+Ativar o ambiente virtual: ```source venv/bin/activate```
+
+Instalar dependências dentro do venv: ```pip install pandas seaborn matplotlib```
+
+Rodar o script de gráficos: ```python generate_graphs.py```
+
+
