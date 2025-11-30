@@ -4,6 +4,12 @@ set -e
 
 echo "🚀 Iniciando deploy automatizado do WordPress..."
 
+# ==============================
+# MARCAR INÍCIO DO PIPELINE
+# ==============================
+PIPELINE_START_TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
+PIPELINE_START_EPOCH=$(date +%s)
+
 # Configurações
 TERRAFORM_DIR="terraform"
 ANSIBLE_DIR="ansible"
@@ -23,16 +29,9 @@ NEXT_BENCH_NUM=$(printf "%03d" $(($(ls -1 "$BENCH_DIR"/*.csv 2>/dev/null | wc -l
 BENCH_FILE="$BENCH_DIR/benchmark_${NEXT_BENCH_NUM}.csv"
 CONSOLIDATED="$BENCH_DIR/all_benchmarks.csv"
 
-PIPELINE_START_TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
-PIPELINE_START_EPOCH=$(date +%s)
-
 # ==============================
 # ETAPA TERRAFORM
 # ==============================
-TF_START_TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
-TF_START_EPOCH=$(date +%s)
-
-# Entrar no diretório do Terraform
 cd "$TERRAFORM_DIR"
 
 echo "📦 Inicializando Terraform..."
@@ -45,13 +44,19 @@ terraform apply -auto-approve
 PUBLIC_IP=$(terraform output -raw instance_public_ip)
 INSTANCE_URL=$(terraform output -raw instance_url)
 
-# 🔑 Caminho absoluto para a chave
+# Caminho absoluto para a chave
 SSH_KEY_PATH="$(pwd)/wordpress-key.pem"
 KEY_CREATED=$(terraform output -raw key_created)
 
-TF_END_TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
-TF_END_EPOCH=$(date +%s)
-TF_DURATION=$((TF_END_EPOCH - TF_START_EPOCH))
+echo "📡 IP Público da instância: $PUBLIC_IP"
+echo "🔑 Chave SSH: $SSH_KEY_PATH"
+echo "🔑 Nova chave criada: $KEY_CREATED"
+
+# Verificar se a chave existe
+if [ ! -f "$SSH_KEY_PATH" ]; then
+    echo "❌ ERRO: Chave SSH não encontrada em: $SSH_KEY_PATH"
+    exit 1
+fi
 
 cd ..
 
@@ -70,36 +75,35 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=30'
 EOF
 
 # ==============================
-# ESPERA INSTÂNCIA
+# ESPERA DINÂMICA DA INSTÂNCIA
 # ==============================
-echo "⏳ Aguardando instância ficar totalmente disponível (60 segundos)..."
-sleep 60
-
-MAX_RETRIES=15
+MAX_RETRIES=20
+SLEEP_INTERVAL=15
 RETRY_COUNT=0
 
-echo "🔍 Aguardando user_data completar..."
-until ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@$PUBLIC_IP "test -f /tmp/user_data_completed" || [ $RETRY_COUNT -eq $MAX_RETRIES ]
-do
-    echo "🔄 Tentativa $((RETRY_COUNT+1))/$MAX_RETRIES - Aguardando user_data completar..."
-    sleep 30
-    RETRY_COUNT=$((RETRY_COUNT+1))
-done
+echo "🔍 Aguardando instância ficar disponível e user_data completar..."
 
-if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-    echo "❌ Falha ao conectar na instância via SSH após $MAX_RETRIES tentativas"
-    echo "💡 Verificando status da instância..."
-    cd "$TERRAFORM_DIR"
-    terraform show
-    exit 1
-fi
+while true; do
+    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$PUBLIC_IP "test -f /tmp/user_data_completed" 2>/dev/null; then
+        echo "✅ Instância pronta e user_data completado!"
+        break
+    fi
+
+    RETRY_COUNT=$((RETRY_COUNT+1))
+    if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+        echo "❌ Timeout: não foi possível conectar na instância após $MAX_RETRIES tentativas"
+        cd "$TERRAFORM_DIR"
+        terraform show
+        exit 1
+    fi
+
+    echo "⏳ Tentativa $RETRY_COUNT/$MAX_RETRIES: Instância ainda não pronta, aguardando $SLEEP_INTERVAL segundos..."
+    sleep $SLEEP_INTERVAL
+done
 
 # ==============================
 # ETAPA ANSIBLE
 # ==============================
-ANS_START_TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
-ANS_START_EPOCH=$(date +%s)
-
 cd "$ANSIBLE_DIR"
 
 echo "🔍 Testando conexão Ansible..."
@@ -108,12 +112,11 @@ ansible -i inventory.ini wordpress -m ping
 echo "🎯 Executando Ansible playbook..."
 ansible-playbook -i inventory.ini playbook.yml
 
-ANS_END_TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
-ANS_END_EPOCH=$(date +%s)
-ANS_DURATION=$((ANS_END_EPOCH - ANS_START_EPOCH))
-
 cd ..
 
+# ==============================
+# MARCAR FIM DO PIPELINE
+# ==============================
 PIPELINE_END_TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
 PIPELINE_END_EPOCH=$(date +%s)
 TOTAL_DURATION=$((PIPELINE_END_EPOCH - PIPELINE_START_EPOCH))
@@ -128,24 +131,11 @@ Author: Bruno
 Generated_at: $PIPELINE_START_TS
 ==============================================
 
-[PIPELINE_START]
-timestamp: $PIPELINE_START_TS
-epoch: $PIPELINE_START_EPOCH
-
-[STAGE_TERRAFORM]
-start: $TF_START_TS
-end:   $TF_END_TS
-duration_seconds: $TF_DURATION
+[PIPELINE]
+start: $PIPELINE_START_TS
+end:   $PIPELINE_END_TS
+duration_seconds: $TOTAL_DURATION
 instance_public_ip: $PUBLIC_IP
-
-[STAGE_ANSIBLE]
-start: $ANS_START_TS
-end:   $ANS_END_TS
-duration_seconds: $ANS_DURATION
-
-[PIPELINE_END]
-timestamp: $PIPELINE_END_TS
-total_duration_seconds: $TOTAL_DURATION
 
 ==============================================
 END OF LOG
@@ -155,13 +145,13 @@ EOF
 # ==============================
 # GERAR CSV INDIVIDUAL E CONSOLIDADO
 # ==============================
-echo "run_id,terraform_seconds,ansible_seconds,total_seconds,public_ip,timestamp" > "$BENCH_FILE"
-echo "$NEXT_BENCH_NUM,$TF_DURATION,$ANS_DURATION,$TOTAL_DURATION,$PUBLIC_IP,$PIPELINE_START_TS" >> "$BENCH_FILE"
+echo "run_id,total_seconds,public_ip,timestamp" > "$BENCH_FILE"
+echo "$NEXT_BENCH_NUM,$TOTAL_DURATION,$PUBLIC_IP,$PIPELINE_START_TS" >> "$BENCH_FILE"
 
 if [ ! -f "$CONSOLIDATED" ]; then
-    echo "run_id,terraform_seconds,ansible_seconds,total_seconds,public_ip,timestamp" > "$CONSOLIDATED"
+    echo "run_id,total_seconds,public_ip,timestamp" > "$CONSOLIDATED"
 fi
-echo "$NEXT_BENCH_NUM,$TF_DURATION,$ANS_DURATION,$TOTAL_DURATION,$PUBLIC_IP,$PIPELINE_START_TS" >> "$CONSOLIDATED"
+echo "$NEXT_BENCH_NUM,$TOTAL_DURATION,$PUBLIC_IP,$PIPELINE_START_TS" >> "$CONSOLIDATED"
 
 # ==============================
 # MENSAGEM FINAL
