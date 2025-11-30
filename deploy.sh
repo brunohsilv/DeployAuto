@@ -8,6 +8,30 @@ echo "🚀 Iniciando deploy automatizado do WordPress..."
 TERRAFORM_DIR="terraform"
 ANSIBLE_DIR="ansible"
 
+# ==============================
+# CRIAR PASTAS DE LOG E BENCHMARK
+# ==============================
+LOG_DIR="logs"
+BENCH_DIR="benchmarks"
+mkdir -p "$LOG_DIR"
+mkdir -p "$BENCH_DIR"
+
+NEXT_LOG_NUM=$(printf "%03d" $(($(ls -1 "$LOG_DIR"/*.log 2>/dev/null | wc -l) + 1)))
+LOG_FILE="$LOG_DIR/log_${NEXT_LOG_NUM}.log"
+
+NEXT_BENCH_NUM=$(printf "%03d" $(($(ls -1 "$BENCH_DIR"/*.csv 2>/dev/null | wc -l) + 1)))
+BENCH_FILE="$BENCH_DIR/benchmark_${NEXT_BENCH_NUM}.csv"
+CONSOLIDATED="$BENCH_DIR/all_benchmarks.csv"
+
+PIPELINE_START_TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
+PIPELINE_START_EPOCH=$(date +%s)
+
+# ==============================
+# ETAPA TERRAFORM
+# ==============================
+TF_START_TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
+TF_START_EPOCH=$(date +%s)
+
 # Entrar no diretório do Terraform
 cd "$TERRAFORM_DIR"
 
@@ -21,24 +45,19 @@ terraform apply -auto-approve
 PUBLIC_IP=$(terraform output -raw instance_public_ip)
 INSTANCE_URL=$(terraform output -raw instance_url)
 
-# 🔑 CORRIGIDO: Caminho absoluto para a chave
+# 🔑 Caminho absoluto para a chave
 SSH_KEY_PATH="$(pwd)/wordpress-key.pem"
 KEY_CREATED=$(terraform output -raw key_created)
 
-echo "📡 IP Público da instância: $PUBLIC_IP"
-echo "🔑 Chave SSH: $SSH_KEY_PATH"
-echo "🔑 Nova chave criada: $KEY_CREATED"
+TF_END_TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
+TF_END_EPOCH=$(date +%s)
+TF_DURATION=$((TF_END_EPOCH - TF_START_EPOCH))
 
-# Verificar se a chave existe
-if [ ! -f "$SSH_KEY_PATH" ]; then
-    echo "❌ ERRO: Chave SSH não encontrada em: $SSH_KEY_PATH"
-    exit 1
-fi
-
-# Voltar ao diretório raiz
 cd ..
 
-# Configurar inventory do Ansible
+# ==============================
+# CONFIGURAR INVENTORY DO ANSIBLE
+# ==============================
 echo "📝 Configurando inventory do Ansible..."
 cat > "$ANSIBLE_DIR/inventory.ini" << EOF
 [wordpress]
@@ -50,11 +69,12 @@ ansible_ssh_private_key_file=$SSH_KEY_PATH
 ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=30'
 EOF
 
-# Aguardar a instância ficar totalmente inicializada
+# ==============================
+# ESPERA INSTÂNCIA
+# ==============================
 echo "⏳ Aguardando instância ficar totalmente disponível (60 segundos)..."
 sleep 60
 
-# Tentar conexão SSH com retry melhorado
 MAX_RETRIES=15
 RETRY_COUNT=0
 
@@ -74,35 +94,83 @@ if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
     exit 1
 fi
 
-echo "✅ User_data completado, executando Ansible..."
+# ==============================
+# ETAPA ANSIBLE
+# ==============================
+ANS_START_TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
+ANS_START_EPOCH=$(date +%s)
 
-# Executar Ansible
 cd "$ANSIBLE_DIR"
 
-# Primeiro teste de conexão
 echo "🔍 Testando conexão Ansible..."
 ansible -i inventory.ini wordpress -m ping
 
-# Executar playbook
 echo "🎯 Executando Ansible playbook..."
 ansible-playbook -i inventory.ini playbook.yml
 
+ANS_END_TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
+ANS_END_EPOCH=$(date +%s)
+ANS_DURATION=$((ANS_END_EPOCH - ANS_START_EPOCH))
+
+cd ..
+
+PIPELINE_END_TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
+PIPELINE_END_EPOCH=$(date +%s)
+TOTAL_DURATION=$((PIPELINE_END_EPOCH - PIPELINE_START_EPOCH))
+
+# ==============================
+# GERAR LOG
+# ==============================
+cat > "$LOG_FILE" << EOF
+DEPLOYMENT BENCHMARK LOG
+Project: WordPress IaC Automation
+Author: Bruno
+Generated_at: $PIPELINE_START_TS
+==============================================
+
+[PIPELINE_START]
+timestamp: $PIPELINE_START_TS
+epoch: $PIPELINE_START_EPOCH
+
+[STAGE_TERRAFORM]
+start: $TF_START_TS
+end:   $TF_END_TS
+duration_seconds: $TF_DURATION
+instance_public_ip: $PUBLIC_IP
+
+[STAGE_ANSIBLE]
+start: $ANS_START_TS
+end:   $ANS_END_TS
+duration_seconds: $ANS_DURATION
+
+[PIPELINE_END]
+timestamp: $PIPELINE_END_TS
+total_duration_seconds: $TOTAL_DURATION
+
+==============================================
+END OF LOG
+==============================================
+EOF
+
+# ==============================
+# GERAR CSV INDIVIDUAL E CONSOLIDADO
+# ==============================
+echo "run_id,terraform_seconds,ansible_seconds,total_seconds,public_ip,timestamp" > "$BENCH_FILE"
+echo "$NEXT_BENCH_NUM,$TF_DURATION,$ANS_DURATION,$TOTAL_DURATION,$PUBLIC_IP,$PIPELINE_START_TS" >> "$BENCH_FILE"
+
+if [ ! -f "$CONSOLIDATED" ]; then
+    echo "run_id,terraform_seconds,ansible_seconds,total_seconds,public_ip,timestamp" > "$CONSOLIDATED"
+fi
+echo "$NEXT_BENCH_NUM,$TF_DURATION,$ANS_DURATION,$TOTAL_DURATION,$PUBLIC_IP,$PIPELINE_START_TS" >> "$CONSOLIDATED"
+
+# ==============================
+# MENSAGEM FINAL
+# ==============================
 echo ""
 echo "🎉 ✅ DEPLOY CONCLUÍDO COM SUCESSO!"
 echo "🌐 WordPress está disponível em: $INSTANCE_URL"
 echo ""
-echo "🔑 Informações de acesso:"
-echo "   SSH: ssh -i $SSH_KEY_PATH ubuntu@$PUBLIC_IP"
+echo "📝 Log gerado: $LOG_FILE"
+echo "📊 Benchmark individual: $BENCH_FILE"
+echo "📈 Dataset consolidado: $CONSOLIDATED"
 echo ""
-echo "📖 Próximos passos:"
-echo "   1. Acesse: $INSTANCE_URL no seu navegador"
-echo "   2. Siga o setup do WordPress"
-echo "   3. Idioma: Português do Brasil"
-echo "   4. Database: Use as credenciais padrão (já configuradas)"
-echo ""
-echo "⚙️  Comandos úteis:"
-echo "   📊 Ver containers: ssh -i $SSH_KEY_PATH ubuntu@$PUBLIC_IP 'sudo docker ps'"
-echo "   📋 Ver logs: ssh -i $SSH_KEY_PATH ubuntu@$PUBLIC_IP 'sudo docker logs wordpress'"
-echo "   🗑️  Destruir tudo: cd terraform && terraform destroy -auto-approve"
-echo ""
-echo "⏰ Observação: Pode levar 1-2 minutos para o WordPress inicializar completamente após o deploy."
