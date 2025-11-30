@@ -25,7 +25,8 @@ mkdir -p "$BENCH_DIR"
 NEXT_LOG_NUM=$(printf "%03d" $(($(ls -1 "$LOG_DIR"/*.log 2>/dev/null | wc -l) + 1)))
 LOG_FILE="$LOG_DIR/log_${NEXT_LOG_NUM}.log"
 
-NEXT_BENCH_NUM=$(printf "%03d" $(($(ls -1 "$BENCH_DIR"/*.csv 2>/dev/null | wc -l) + 1)))
+# Contar apenas arquivos de benchmark individuais (ignora all_benchmarks.csv)
+NEXT_BENCH_NUM=$(printf "%03d" $(($(ls -1 "$BENCH_DIR"/benchmark_*.csv 2>/dev/null | wc -l) + 1)))
 BENCH_FILE="$BENCH_DIR/benchmark_${NEXT_BENCH_NUM}.csv"
 CONSOLIDATED="$BENCH_DIR/all_benchmarks.csv"
 
